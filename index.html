@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>TrexBacktest V4.1 - SL/TP Restored</title>
+    <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+    <style>
+        :root { --bg: #0b0e11; --panel: #1e222d; --accent: #2962ff; --up: #2ebd85; --down: #f6465d; --text: #d1d4dc; }
+        body { margin: 0; background: var(--bg); color: var(--text); font-family: 'Inter', sans-serif; overflow: hidden; display: flex; flex-direction: column; height: 100vh; }
+        header { height: 50px; background: var(--panel); border-bottom: 1px solid #363c4e; display: flex; align-items: center; padding: 0 15px; justify-content: space-between; }
+        .setup-group { display: flex; align-items: center; gap: 10px; }
+        .tf-select { background: #131722; color: white; border: 1px solid #363c4e; padding: 5px 10px; border-radius: 4px; outline: none; cursor: pointer; }
+        .main-container { display: flex; flex: 1; position: relative; overflow: hidden; }
+        .sidebar { width: 50px; background: var(--panel); border-right: 1px solid #363c4e; display: flex; flex-direction: column; align-items: center; padding-top: 10px; gap: 15px; z-index: 100; }
+        .tool-btn { color: #848e9c; cursor: pointer; font-size: 18px; background: none; border: none; padding: 8px; border-radius: 4px; }
+        .tool-btn.active { color: var(--accent); background: #2b2f3a; }
+        #chart-wrapper { flex: 1; position: relative; }
+        #chart { width: 100%; height: 100%; }
+        #drawing-canvas { position: absolute; top: 0; left: 0; z-index: 50; pointer-events: auto; }
+        .bottom-panel { height: 180px; background: var(--panel); border-top: 2px solid var(--accent); display: flex; flex-direction: column; }
+        .controls { display: flex; justify-content: center; align-items: center; gap: 15px; padding: 10px; background: #131722; }
+        .btn { padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+        .btn-buy { background: var(--up); color: white; }
+        .btn-sell { background: var(--down); color: white; }
+        .journal { flex: 1; overflow-y: auto; padding: 10px; font-size: 11px; }
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; color: #848e9c; border-bottom: 1px solid #363c4e; padding: 5px; }
+        td { padding: 5px; border-bottom: 1px solid #2a2e39; }
+        #rr-badge { position: absolute; top: 10px; right: 20px; background: rgba(0,0,0,0.85); padding: 8px 12px; border-radius: 6px; color: #f0b90b; font-size: 13px; z-index: 150; display: none; border: 1px solid #f0b90b; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="setup-group">
+        <div style="font-weight: bold; color: var(--accent); margin-right: 15px;">🦖 TrexBacktest <span style="color:white">V4.1 (SL/TP Fixed)</span></div>
+        <select class="tf-select" id="tfSelector" onchange="changeTF(this.value)">
+            <option value="1m">1m</option><option value="5m">5m</option><option value="15m">15m</option>
+            <option value="1h" selected>1h</option><option value="4h">4h</option><option value="1d">1d</option>
+            <option value="1w">1w</option><option value="1M">1M</option>
+        </select>
+    </div>
+    <div>Balance: <b id="balance" style="color:var(--up); font-size: 16px;">$10,000.00</b></div>
+</header>
+
+<div class="main-container">
+    <div id="rr-badge">RR: 0.00</div>
+    <div class="sidebar">
+        <button class="tool-btn active" id="btn-cursor" onclick="setMode('cursor')"><i class="fas fa-mouse-pointer"></i></button>
+        <button class="tool-btn" id="btn-trend" onclick="setMode('trend')"><i class="fas fa-slash"></i></button>
+        <button class="tool-btn" id="btn-hline" onclick="setMode('hline')"><i class="fas fa-minus"></i></button>
+        <button class="tool-btn" onclick="clearDrawings()"><i class="fas fa-trash"></i></button>
+    </div>
+    <div id="chart-wrapper">
+        <div id="chart"></div>
+        <canvas id="drawing-canvas"></canvas>
+    </div>
+</div>
+
+<div class="bottom-panel">
+    <div class="controls">
+        <div style="background:#1e222d; padding:5px 10px; border-radius:4px; border:1px solid #444;">
+            <span style="font-size:11px; color:#848e9c;">LOT:</span>
+            <input type="number" id="lotSize" value="0.10" step="0.01" style="background:none; border:none; color:white; width:50px; outline:none;">
+        </div>
+        <button class="btn" style="background:var(--accent); color:white;" onclick="nextBar()">NEXT BAR (Space)</button>
+        <button class="btn" style="background:#363c4e; color:white;" onclick="toggleAutoPlay()" id="playBtn">▶ AUTO PLAY</button>
+        <button class="btn btn-buy" id="buyBtn" onclick="openTrade('BUY')">BUY</button>
+        <button class="btn btn-sell" id="sellBtn" onclick="openTrade('SELL')">SELL</button>
+        <button class="btn" id="closeBtn" style="display:none; background:var(--accent); color:white;" onclick="manualClose()">CLOSE POSITION</button>
+    </div>
+    <div class="journal">
+        <table>
+            <thead><tr><th>TF</th><th>Type</th><th>Entry</th><th>SL</th><th>TP</th><th>Result</th><th>PnL ($)</th></tr></thead>
+            <tbody id="journal-body"></tbody>
+        </table>
+    </div>
+</div>
+
+<script>
+    let balance = 10000;
+    let allData = [];
+    let currentIndex = 150;
+    let currentTrade = null;
+    let autoPlayInterval = null;
+    let entryLine, slLine, tpLine;
+
+    // Drawing
+    let mode = 'cursor';
+    let isDrawing = false;
+    let startPoint = null;
+    let lines = []; let hLines = [];
+    let selectedObject = null; let draggingType = null;
+    let dragOffset = { dy: 0 };
+
+    const canvas = document.getElementById('drawing-canvas');
+    const ctx = canvas.getContext('2d');
+    const chartWrapper = document.getElementById('chart-wrapper');
+
+    const chart = LightweightCharts.createChart(document.getElementById('chart'), {
+        layout: { background: { color: '#0b0e11' }, textColor: '#d1d4dc' },
+        grid: { vertLines: { color: '#1f2226' }, horzLines: { color: '#1f2226' } },
+        timeScale: { timeVisible: true, rightOffset: 15 },
+    });
+    const candleSeries = chart.addCandlestickSeries({ upColor: '#2ebd85', downColor: '#f6465d' });
+
+    async function loadData(tf) {
+        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${tf}&limit=1000`);
+        const data = await res.json();
+        allData = data.map(d => ({
+            time: d[0] / 1000, open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4])
+        }));
+        candleSeries.setData(allData.slice(0, currentIndex));
+        resizeCanvas();
+    }
+
+    function changeTF(tf) { if(!currentTrade) loadData(tf); else alert("Close trade first!"); }
+
+    function openTrade(type) {
+        if (currentTrade) return;
+        const p = allData[currentIndex - 1].close;
+        const sl = type === 'BUY' ? p * 0.99 : p * 1.01;
+        const tp = type === 'BUY' ? p * 1.02 : p * 0.98;
+        
+        currentTrade = { type, entry: p, sl, tp, lot: parseFloat(document.getElementById('lotSize').value), tf: document.getElementById('tfSelector').value };
+        
+        entryLine = candleSeries.createPriceLine({ price: p, color: '#f0b90b', title: 'ENTRY' });
+        slLine = candleSeries.createPriceLine({ price: sl, color: '#f6465d', title: 'SL', lineWidth: 2, lineStyle: 2, axisLabelVisible: true });
+        tpLine = candleSeries.createPriceLine({ price: tp, color: '#2ebd85', title: 'TP', lineWidth: 2, lineStyle: 2, axisLabelVisible: true });
+        
+        document.getElementById('buyBtn').style.display = 'none';
+        document.getElementById('sellBtn').style.display = 'none';
+        document.getElementById('closeBtn').style.display = 'inline-block';
+        updateRR();
+    }
+
+    function checkResult(c) {
+        if (!currentTrade) return;
+        let r = null;
+        if (currentTrade.type === 'BUY') {
+            if (c.low <= currentTrade.sl) r = 'SL';
+            else if (c.high >= currentTrade.tp) r = 'TP';
+        } else {
+            if (c.high >= currentTrade.sl) r = 'SL';
+            else if (c.low <= currentTrade.tp) r = 'TP';
+        }
+        if (r) finishTrade(r, r === 'TP' ? currentTrade.tp : currentTrade.sl);
+    }
+
+    function finishTrade(res, exitP) {
+        const pnl = (currentTrade.type === 'BUY' ? exitP - currentTrade.entry : currentTrade.entry - exitP) * currentTrade.lot * 100;
+        balance += pnl;
+        document.getElementById('balance').innerText = `$${balance.toFixed(2)}`;
+        document.getElementById('journal-body').insertAdjacentHTML('afterbegin', `<tr><td>${currentTrade.tf}</td><td>${currentTrade.type}</td><td>${currentTrade.entry.toFixed(2)}</td><td>${currentTrade.sl.toFixed(2)}</td><td>${currentTrade.tp.toFixed(2)}</td><td style="color:${pnl>=0?'var(--up)':'var(--down)'}">${res}</td><td>${pnl.toFixed(2)}</td></tr>`);
+        
+        candleSeries.removePriceLine(entryLine); 
+        candleSeries.removePriceLine(slLine); 
+        candleSeries.removePriceLine(tpLine);
+        
+        currentTrade = null;
+        document.getElementById('buyBtn').style.display = 'inline-block';
+        document.getElementById('sellBtn').style.display = 'inline-block';
+        document.getElementById('closeBtn').style.display = 'none';
+        updateRR();
+    }
+
+    // --- Interaction Logic ---
+    canvas.addEventListener('mousedown', e => {
+        const y = e.offsetY;
+        if (mode === 'cursor' && currentTrade) {
+            const price = candleSeries.coordinateToPrice(y);
+            if (Math.abs(price - currentTrade.sl) < (currentTrade.sl * 0.002)) draggingType = 'sl';
+            else if (Math.abs(price - currentTrade.tp) < (currentTrade.tp * 0.002)) draggingType = 'tp';
+        }
+    });
+
+    canvas.addEventListener('mousemove', e => {
+        if (draggingType && currentTrade) {
+            const price = candleSeries.coordinateToPrice(e.offsetY);
+            if (draggingType === 'sl') {
+                currentTrade.sl = price;
+                candleSeries.removePriceLine(slLine);
+                slLine = candleSeries.createPriceLine({ price: price, color: '#f6465d', title: 'SL', lineWidth: 2, lineStyle: 2 });
+            } else if (draggingType === 'tp') {
+                currentTrade.tp = price;
+                candleSeries.removePriceLine(tpLine);
+                tpLine = candleSeries.createPriceLine({ price: price, color: '#2ebd85', title: 'TP', lineWidth: 2, lineStyle: 2 });
+            }
+            updateRR();
+        }
+    });
+
+    canvas.addEventListener('mouseup', () => { draggingType = null; });
+
+    function nextBar() { if (currentIndex < allData.length) { const bar = allData[currentIndex++]; candleSeries.update(bar); checkResult(bar); } }
+    function manualClose() { if(currentTrade) finishTrade('MANUAL', allData[currentIndex-1].close); }
+    function toggleAutoPlay() { if (autoPlayInterval) { clearInterval(autoPlayInterval); autoPlayInterval = null; document.getElementById('playBtn').innerText = "▶ AUTO PLAY"; } else { autoPlayInterval = setInterval(nextBar, 400); document.getElementById('playBtn').innerText = "⏸ PAUSE"; } }
+    function updateRR() { if (!currentTrade) { document.getElementById('rr-badge').style.display = 'none'; return; } const rk = Math.abs(currentTrade.entry - currentTrade.sl); const rw = Math.abs(currentTrade.entry - currentTrade.tp); document.getElementById('rr-badge').innerHTML = `RR 1:${(rw/rk).toFixed(2)}`; document.getElementById('rr-badge').style.display = 'block'; }
+    function setMode(m) { mode = m; document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active')); document.getElementById(`btn-${m}`)?.classList.add('active'); }
+    function resizeCanvas() { canvas.width = chartWrapper.clientWidth; canvas.height = chartWrapper.clientHeight; }
+    function clearDrawings() { lines = []; hLines = []; redraw(); }
+    
+    window.addEventListener('keydown', e => { if (e.code === "Space") { e.preventDefault(); nextBar(); } });
+    loadData('1h');
+</script>
+</body>
+</html>
