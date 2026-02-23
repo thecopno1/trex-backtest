@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
     <meta charset="UTF-8">
-    <title>TrexBacktest V4.1 - GOLD EDITION (XAUUSD)</title>
+    <title>TrexBacktest V4.2 - GOLD FULL TIMEFRAME</title>
     <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
     <style>
@@ -36,8 +36,15 @@
     <div class="setup-group">
         <div style="font-weight: bold; color: var(--accent); margin-right: 15px;">🏆 GOLD TREX <span style="color:white">XAU/USD</span></div>
         <select class="tf-select" id="tfSelector" onchange="changeTF(this.value)">
-            <option value="15m">15m</option><option value="1h" selected>1h</option>
-            <option value="4h">4h</option><option value="1d">1d</option>
+            <option value="1m">1m</option>
+            <option value="5m">5m</option>
+            <option value="15m">15m</option>
+            <option value="30m">30m</option>
+            <option value="1h" selected>1h</option>
+            <option value="4h">4h</option>
+            <option value="1d">1d</option>
+            <option value="1w">1w</option>
+            <option value="1M">1M (Month)</option>
         </select>
     </div>
     <div>Balance: <b id="balance" style="color:var(--up); font-size: 16px;">$10,000.00</b></div>
@@ -99,21 +106,26 @@
     const candleSeries = chart.addCandlestickSeries({ upColor: '#2ebd85', downColor: '#f6465d' });
 
     async function loadData(tf) {
-        // ใช้ PAXGUSDT ของ Binance แทนราคาทองคำ (เพราะราคาจะวิ่งใกล้เคียงกับ XAU/USD มากที่สุด)
-        const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=${tf}&limit=1000`);
-        const data = await res.json();
-        allData = data.map(d => ({
-            time: d[0] / 1000, open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4])
-        }));
-        candleSeries.setData(allData.slice(0, currentIndex));
-        resizeCanvas();
+        try {
+            const res = await fetch(`https://api.binance.com/api/v3/klines?symbol=PAXGUSDT&interval=${tf}&limit=1000`);
+            const data = await res.json();
+            allData = data.map(d => ({
+                time: d[0] / 1000, open: parseFloat(d[1]), high: parseFloat(d[2]), low: parseFloat(d[3]), close: parseFloat(d[4])
+            }));
+            currentIndex = 150; // เริ่มต้นใหม่ทุกครั้งที่เปลี่ยน TF เพื่อทำ Backtest
+            candleSeries.setData(allData.slice(0, currentIndex));
+            chart.timeScale().fitContent();
+            resizeCanvas();
+        } catch (e) {
+            console.error("Error loading data:", e);
+        }
     }
 
     function openTrade(type) {
         if (currentTrade) return;
         const p = allData[currentIndex - 1].close;
-        const sl = type === 'BUY' ? p - 5 : p + 5; // Default SL 5$
-        const tp = type === 'BUY' ? p + 10 : p - 10; // Default TP 10$
+        const sl = type === 'BUY' ? p - 5 : p + 5; 
+        const tp = type === 'BUY' ? p + 10 : p - 10; 
         
         currentTrade = { type, entry: p, sl, tp, lot: parseFloat(document.getElementById('lotSize').value), tf: document.getElementById('tfSelector').value };
         
@@ -185,8 +197,7 @@
     function updateRR() { if (!currentTrade) { document.getElementById('rr-badge').style.display = 'none'; return; } const rk = Math.abs(currentTrade.entry - currentTrade.sl); const rw = Math.abs(currentTrade.entry - currentTrade.tp); document.getElementById('rr-badge').innerHTML = `RR 1:${(rw/rk).toFixed(2)}`; document.getElementById('rr-badge').style.display = 'block'; }
     function setMode(m) { mode = m; document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active')); document.getElementById(`btn-${m}`)?.classList.add('active'); }
     function resizeCanvas() { canvas.width = chartWrapper.clientWidth; canvas.height = chartWrapper.clientHeight; }
-    function clearDrawings() { redraw(); }
-    function changeTF(tf) { if(!currentTrade) loadData(tf); else alert("Close trade first!"); }
+    function changeTF(tf) { if(!currentTrade) loadData(tf); else alert("กรุณาปิดสถานะปัจจุบันก่อนเปลี่ยน Timeframe ครับ"); }
     window.addEventListener('keydown', e => { if (e.code === "Space") { e.preventDefault(); nextBar(); } });
     loadData('1h');
 </script>
